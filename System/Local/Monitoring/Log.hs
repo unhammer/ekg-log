@@ -1,55 +1,55 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
--- | This module lets you periodically flush metrics to a statsd
--- backend. Example usage:
+
+-- | This module lets you periodically flush metrics to a log file
+-- that automatically rotates itself.
 --
 -- > main = do
 -- >     store <- newStore
--- >     forkStatsd defaultStatsdOptions store
+-- >     forkEkgLog defaultLogOptions store
 --
 -- You probably want to include some of the predefined metrics defined
 -- in the ekg-core package, by calling e.g. the 'registerGcStats'
 -- function defined in that package.
-module System.Remote.Monitoring.Statsd
+module System.Remote.Monitoring.Log
     (
       -- * The statsd syncer
-      Statsd
-    , statsdThreadId
-    , forkStatsd
-    , StatsdOptions(..)
-    , defaultStatsdOptions
+      Log
+    , logThreadId
+    , forkEkgLog
+    , LogOptions(..)
+    , defaultLogOptions
     ) where
 
-import Control.Concurrent (ThreadId, myThreadId, threadDelay, throwTo)
-import Control.Exception (IOException, catch)
-import Control.Monad (forM_, when)
+import           Control.Concurrent    (ThreadId, myThreadId, threadDelay,
+                                        throwTo)
+import           Control.Exception     (IOException, catch)
+import           Control.Monad         (forM_, when)
 import qualified Data.ByteString.Char8 as B8
-import qualified Data.HashMap.Strict as M
-import Data.Int (Int64)
-import Data.Monoid ((<>))
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.IO as T
-import Data.Time.Clock.POSIX (getPOSIXTime)
-import qualified Network.Socket as Socket
-import qualified Network.Socket.ByteString as Socket
-import qualified System.Metrics as Metrics
-import System.IO (stderr)
+import qualified Data.HashMap.Strict   as M
+import           Data.Int              (Int64)
+import           Data.Monoid           ((<>))
+import qualified Data.Text             as T
+import qualified Data.Text.Encoding    as T
+import qualified Data.Text.IO          as T
+import           Data.Time.Clock.POSIX (getPOSIXTime)
+import           System.IO             (stderr)
+import qualified System.Metrics        as Metrics
 
 #if __GLASGOW_HASKELL__ >= 706
-import Control.Concurrent (forkFinally)
+import           Control.Concurrent    (forkFinally)
 #else
-import Control.Concurrent (forkIO)
-import Control.Exception (SomeException, mask, try)
-import Prelude hiding (catch)
+import           Control.Concurrent    (forkIO)
+import           Control.Exception     (SomeException, mask, try)
+import           Prelude               hiding (catch)
 #endif
 
--- | A handle that can be used to control the statsd sync thread.
--- Created by 'forkStatsd'.
-data Statsd = Statsd
+-- | A handle that can be used to control the log sync thread.
+-- Created by 'forkEkgLog'.
+data Log = Log
     { threadId :: {-# UNPACK #-} !ThreadId
     }
 
@@ -59,46 +59,43 @@ data Statsd = Statsd
 statsdThreadId :: Statsd -> ThreadId
 statsdThreadId = threadId
 
--- | Options to control how to connect to the statsd server and how
--- often to flush metrics. The flush interval should be shorter than
--- the flush interval statsd itself uses to flush data to its
--- backends.
-data StatsdOptions = StatsdOptions
+-- | Options to control whate log file to append to, when to rotate,
+-- and how often to flush metrics. The flush interval should be
+-- shorter than the flush interval.
+data LogOptions = LogOptions
     { -- | Server hostname or IP address
-      host :: !T.Text
+      logfile       :: !FP.FilePath
 
       -- | Server port
-    , port :: !Int
+    , rotateCap     :: !Word64
 
       -- | Data push interval, in ms.
     , flushInterval :: !Int
 
       -- | Print debug output to stderr.
-    , debug :: !Bool
+    , debug         :: !Bool
 
       -- | Prefix to add to all metric names.
-    , prefix :: !T.Text
+    , prefix        :: !T.Text
 
       -- | Suffix to add to all metric names. This is particularly
-      -- useful for sending per host stats by settings this value to:
-      -- @takeWhile (/= \'.\') \<$\> getHostName@, using @getHostName@
-      -- from the @Network.BSD@ module in the network package.
-    , suffix :: !T.Text
+      -- useful for sending per application stats.
+    , suffix        :: !T.Text
     }
 
 -- | Defaults:
 --
--- * @host@ = @\"127.0.0.1\"@
+-- * @logfile@ = @\"./ekg.log\"@
 --
--- * @port@ = @8125@
+-- * @rotateCap@ = @50000000@ (50MB)
 --
 -- * @flushInterval@ = @1000@
 --
 -- * @debug@ = @False@
-defaultStatsdOptions :: StatsdOptions
-defaultStatsdOptions = StatsdOptions
-    { host          = "127.0.0.1"
-    , port          = 8125
+defaultLogOptions :: LogOptions
+defaultLogOptions = LogOptions
+    { logfile       = "./ekg.log"
+    , rotateCap     = 1000000 * 50
     , flushInterval = 1000
     , debug         = False
     , prefix        = ""
@@ -106,21 +103,17 @@ defaultStatsdOptions = StatsdOptions
     }
 
 -- | Create a thread that periodically flushes the metrics in the
--- store to statsd.
-forkStatsd :: StatsdOptions  -- ^ Options
-           -> Metrics.Store  -- ^ Metric store
-           -> IO Statsd      -- ^ Statsd sync handle
-forkStatsd opts store = do
-    addrInfos <- Socket.getAddrInfo Nothing (Just $ T.unpack $ host opts)
-                 (Just $ show $ port opts)
-    socket <- case addrInfos of
-        [] -> unsupportedAddressError
-        (addrInfo:_) -> do
-            socket <- Socket.socket (Socket.addrFamily addrInfo)
-                      Socket.Datagram Socket.defaultProtocol
-            Socket.connect socket (Socket.addrAddress addrInfo)
-            return socket
-    me <- myThreadId
+-- store to a log file.
+forkEkgLog :: LogOptions    -- ^ Options
+           -> Metrics.Store -- ^ Metric store
+           -> IO Log        -- ^ Statsd sync handle
+forkEkgLog opts store = do
+    log <- mkRotatingLog
+             (prefix    opts)
+             (rotateCap opts)
+             LineBuffering
+             archiveFile
+    me  <- myThreadId
     tid <- forkFinally (loop store emptySample socket opts) $ \ r -> do
         Socket.close socket
         case r of
