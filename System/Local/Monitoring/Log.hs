@@ -160,15 +160,15 @@ diffSamples prev curr = M.foldlWithKey' combine M.empty curr
 
 flushSample :: Metrics.Sample -> LoggerSet -> LogOptions -> IO ()
 flushSample sample logset opts = do
-    time' <- getCurrentTime
-    forM_ (M.toList sample) $ \(name, val) ->
+    forM_ (M.toList sample) $ \(name, val) -> do
+        time' <- getCurrentTime
         let newName = dottedPrefix <> name <> dottedSuffix
             newObj  = case val of
                 (Metrics.Counter v)      -> object [ "timestamp" .= time', newName .= show v ]
                 (Metrics.Gauge   v)      -> object [ "timestamp" .= time', newName .= show v ]
                 (Metrics.Label   v)      -> object [ "timestamp" .= time', newName .= show v ]
                 (Metrics.Distribution v) -> object [ "timestamp" .= time', newName .= show v ]
-        in flushMetric newObj
+        flushMetric newObj
   where
     isDebug = debug opts
 
