@@ -26,7 +26,7 @@ module System.Remote.Monitoring.Log
 
 import           Control.Concurrent    (ThreadId, myThreadId, threadDelay,
                                         throwTo)
-import           Control.Exception     (IOException, catch)
+import           Control.Exception     ()
 import           Control.Monad         (forM_, when)
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.HashMap.Strict   as M
@@ -34,9 +34,11 @@ import           Data.Int              (Int64)
 import           Data.Monoid           ((<>))
 import qualified Data.Text             as T
 import qualified Data.Text.Encoding    as T
-import qualified Data.Text.IO          as T
+import qualified Data.Text.IO          ()
 import           Data.Time.Clock.POSIX (getPOSIXTime)
+import qualified System.FilePath       as FP
 import           System.IO             (stderr)
+import           System.Log.FastLogger
 import qualified System.Metrics        as Metrics
 
 #if __GLASGOW_HASKELL__ >= 706
@@ -56,8 +58,8 @@ data Log = Log
 -- | The thread ID of the statsd sync thread. You can stop the sync by
 -- killing this thread (i.e. by throwing it an asynchronous
 -- exception.)
-statsdThreadId :: Statsd -> ThreadId
-statsdThreadId = threadId
+logThreadId :: Log -> ThreadId
+logThreadId = threadId
 
 -- | Options to control whate log file to append to, when to rotate,
 -- and how often to flush metrics. The flush interval should be
@@ -65,9 +67,6 @@ statsdThreadId = threadId
 data LogOptions = LogOptions
     { -- | Server hostname or IP address
       logfile       :: !FP.FilePath
-
-      -- | Server port
-    , rotateCap     :: !Word64
 
       -- | Data push interval, in ms.
     , flushInterval :: !Int
@@ -87,15 +86,12 @@ data LogOptions = LogOptions
 --
 -- * @logfile@ = @\"./ekg.log\"@
 --
--- * @rotateCap@ = @50000000@ (50MB)
---
 -- * @flushInterval@ = @1000@
 --
 -- * @debug@ = @False@
 defaultLogOptions :: LogOptions
 defaultLogOptions = LogOptions
     { logfile       = "./ekg.log"
-    , rotateCap     = 1000000 * 50
     , flushInterval = 1000
     , debug         = False
     , prefix        = ""
@@ -108,36 +104,30 @@ forkEkgLog :: LogOptions    -- ^ Options
            -> Metrics.Store -- ^ Metric store
            -> IO Log        -- ^ Statsd sync handle
 forkEkgLog opts store = do
-    log <- mkRotatingLog
-             (prefix    opts)
-             (rotateCap opts)
-             LineBuffering
-             archiveFile
-    me  <- myThreadId
-    tid <- forkFinally (loop store emptySample socket opts) $ \ r -> do
-        Socket.close socket
+    logset <- newFileLoggerSet defaultBufSize (logfile opts)
+    me     <- myThreadId
+    tid    <- forkFinally (loop store emptySample logset opts) $ \ r -> do
+        rmLoggerSet logset
         case r of
             Left e  -> throwTo me e
             Right _ -> return ()
-    return $ Statsd tid
+    return $ Log tid
   where
-    unsupportedAddressError = ioError $ userError $
-        "unsupported address: " ++ T.unpack (host opts)
     emptySample = M.empty
 
 loop :: Metrics.Store   -- ^ Metric store
      -> Metrics.Sample  -- ^ Last sampled metrics
-     -> Socket.Socket   -- ^ Connected socket
-     -> StatsdOptions   -- ^ Options
+     -> LoggerSet       -- ^ FastLogger set
+     -> LogOptions      -- ^ Options
      -> IO ()
-loop store lastSample socket opts = do
+loop store lastSample logset opts = do
     start <- time
     sample <- Metrics.sampleAll store
     let !diff = diffSamples lastSample sample
-    flushSample diff socket opts
+    flushSample diff logset opts
     end <- time
     threadDelay (flushInterval opts * 1000 - fromIntegral (end - start))
-    loop store sample socket opts
+    loop store sample logset opts
 
 -- | Microseconds since epoch.
 time :: IO Int64
@@ -166,8 +156,8 @@ diffSamples prev curr = M.foldlWithKey' combine M.empty curr
     -- Distributions are assumed to be non-equal.
     diffMetric _ _  = Nothing
 
-flushSample :: Metrics.Sample -> Socket.Socket -> StatsdOptions -> IO ()
-flushSample sample socket opts = do
+flushSample :: Metrics.Sample -> LoggerSet -> LogOptions -> IO ()
+flushSample sample logset opts = do
     forM_ (M.toList $ sample) $ \ (name, val) ->
         let fullName = dottedPrefix <> name <> dottedSuffix
         in  flushMetric fullName val
@@ -182,10 +172,7 @@ flushSample sample socket opts = do
     send ty name val = do
         let !msg = B8.concat [T.encodeUtf8 name, ":", B8.pack val, ty]
         when isDebug $ B8.hPutStrLn stderr $ B8.concat [ "DEBUG: ", msg]
-        Socket.sendAll socket msg `catch` \ (e :: IOException) -> do
-            T.hPutStrLn stderr $ "ERROR: Couldn't send message: " <>
-                T.pack (show e)
-            return ()
+        pushLogStr logset $ toLogStr msg
 
 ------------------------------------------------------------------------
 -- Backwards compatibility shims
