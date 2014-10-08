@@ -88,13 +88,13 @@ data LogOptions = LogOptions
 --
 -- * @logfile@ = @\"./ekg.log\"@
 --
--- * @flushInterval@ = @1000@
+-- * @flushInterval@ = @5000@
 --
 -- * @debug@ = @False@
 defaultLogOptions :: LogOptions
 defaultLogOptions = LogOptions
     { logfile       = "./ekg.log"
-    , flushInterval = 1000
+    , flushInterval = 5000
     , debug         = False
     , prefix        = ""
     , suffix        = ""
