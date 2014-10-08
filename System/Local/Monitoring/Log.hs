@@ -178,7 +178,7 @@ flushSample sample logset opts = do
     flushMetric metricObj = do
         let !msg = L.toStrict $ A.encode metricObj
         when isDebug $ B8.hPutStrLn stderr $ B8.concat [ "DEBUG: ", msg]
-        pushLogStr logset $ toLogStr msg
+        pushLogStr logset . toLogStr $ B8.append "\n" msg
 
 ------------------------------------------------------------------------
 -- Backwards compatibility shims
