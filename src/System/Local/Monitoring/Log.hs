@@ -38,6 +38,7 @@ import qualified Data.Text             as T
 import qualified Data.Text.IO          ()
 import           Data.Time
 import           Data.Time.Clock.POSIX (getPOSIXTime)
+import           System.Directory      (removeFile)
 import qualified System.FilePath       as FP
 import           System.IO             (stderr)
 import           System.Log.FastLogger
