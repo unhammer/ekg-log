@@ -36,6 +36,7 @@ import           Data.Int              (Int64)
 import           Data.Monoid           ((<>))
 import qualified Data.Text             as T
 import qualified Data.Text.IO          ()
+import           Data.Time
 import           Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified System.FilePath       as FP
 import           System.IO             (stderr)
@@ -159,22 +160,17 @@ diffSamples prev curr = M.foldlWithKey' combine M.empty curr
 
 flushSample :: Metrics.Sample -> LoggerSet -> LogOptions -> IO ()
 flushSample sample logset opts = do
-    -- Filter out anything but Counter and Gauge
-    let filtered = M.filter isValWeWant sample
-
-    forM_ (M.toList filtered) $ \(name, val) ->
+    time' <- getCurrentTime
+    forM_ (M.toList sample) $ \(name, val) ->
         let newName = dottedPrefix <> name <> dottedSuffix
             newObj  = case val of
-                (Metrics.Counter v) -> object [ newName .= show v ]
-                (Metrics.Gauge   v) -> object [ newName .= show v ]
-                (Metrics.Label   v) -> object [ newName .= show v ]
-                (Metrics.Distribution v) -> object [ newName .= show v ]
+                (Metrics.Counter v)      -> object [ "timestamp" .= time', newName .= show v ]
+                (Metrics.Gauge   v)      -> object [ "timestamp" .= time', newName .= show v ]
+                (Metrics.Label   v)      -> object [ "timestamp" .= time', newName .= show v ]
+                (Metrics.Distribution v) -> object [ "timestamp" .= time', newName .= show v ]
         in flushMetric newObj
   where
     isDebug = debug opts
-    isValWeWant (Metrics.Counter _) = True
-    isValWeWant (Metrics.Gauge   _) = True
-    isValWeWant _ = False
 
     dottedPrefix = if T.null (prefix opts) then "" else prefix opts <> "."
     dottedSuffix = if T.null (suffix opts) then "" else "." <> suffix opts
