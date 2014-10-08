@@ -131,10 +131,12 @@ loop store lastSample logset opts = do
     logexists <- doesFileExist (logfile opts)
 
     if logexists
-    then removeFile (logfile opts)
-    else return ()
+    then do
+        removeFile (logfile opts)
+        flushSample diff logset opts
+    else do
+	flushSample diff logset opts
 
-    flushSample diff logset opts
     end <- time
     threadDelay (flushInterval opts * 1000 - fromIntegral (end - start))
     loop store sample logset opts
