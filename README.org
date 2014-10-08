@@ -1,0 +1,23 @@
+* Welcome!
+  This library lets you send metrics gathered by the ekg family of
+  packages (e.g. ekg-core and ekg) to a log for reading via a service
+  plugin like [[http://serverdensity.com][Server Density]], piping to a pub/sub queue, or whatever
+  you want.
+
+* Getting started
+  Exporting metrics to a log is simple, create an empty metric store
+  and register some metrics:
+
+  #+BEGIN_SRC
+  import System.Metrics
+  import System.Remote.Monitoring.Statsd
+
+  main = do
+      store <- newStore
+      registerGcMetrics store
+      forkStatsd defaultStatsdOptions store
+      ...
+  #+END_SRC
+
+  =forkEkgLog= starts a new thread that periodically appends your
+  metrics to a specified log file.
