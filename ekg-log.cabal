@@ -1,5 +1,5 @@
 name:                ekg-log
-version:             0.1.0.2
+version:             0.1.0.3
 synopsis:            Push metrics to a log file.
 description:
   This library lets you push system metrics to a log file.
