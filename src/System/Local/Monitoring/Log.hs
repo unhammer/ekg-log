@@ -161,6 +161,7 @@ diffSamples prev curr = M.foldlWithKey' combine M.empty curr
 
 flushSample :: Metrics.Sample -> LoggerSet -> LogOptions -> IO ()
 flushSample sample logset opts = do
+    removeFile (logfile opts)
     forM_ (M.toList sample) $ \(name, val) -> do
         time' <- getCurrentTime
         let newName = dottedPrefix <> name <> dottedSuffix
