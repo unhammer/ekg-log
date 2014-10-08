@@ -27,8 +27,10 @@ module System.Local.Monitoring.Log
 import           Control.Concurrent    (ThreadId, myThreadId, threadDelay,
                                         throwTo)
 import           Control.Exception     ()
-import           Control.Monad         (forM_, when)
+import           Control.Monad         (forM, forM_, when)
+import           Data.Aeson            as A
 import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString.Lazy  as L
 import qualified Data.HashMap.Strict   as M
 import           Data.Int              (Int64)
 import           Data.Monoid           ((<>))
@@ -158,19 +160,22 @@ diffSamples prev curr = M.foldlWithKey' combine M.empty curr
 
 flushSample :: Metrics.Sample -> LoggerSet -> LogOptions -> IO ()
 flushSample sample logset opts = do
-    forM_ (M.toList $ sample) $ \ (name, val) ->
-        let fullName = dottedPrefix <> name <> dottedSuffix
-        in  flushMetric fullName val
-  where
-    flushMetric name (Metrics.Counter n) = send "|c" name (show n)
-    flushMetric name (Metrics.Gauge n)   = send "|g" name (show n)
-    flushMetric _ _                      = return ()
+    metricObjs <- forM (M.toList $ sample) $ \(name, val) -> do
+        let newName = dottedPrefix <> name <> dottedSuffix
+        return (newName, (unwrapVal val))
 
+    flushMetric $ M.fromList metricObjs
+  where
     isDebug = debug opts
+
+    unwrapVal (Metrics.Counter v) = v
+    unwrapVal (Metrics.Gauge   v) = v
+
     dottedPrefix = if T.null (prefix opts) then "" else prefix opts <> "."
     dottedSuffix = if T.null (suffix opts) then "" else "." <> suffix opts
-    send ty name val = do
-        let !msg = B8.concat [T.encodeUtf8 name, ":", B8.pack val, ty]
+
+    flushMetric metrics = do
+        let !msg = L.toStrict $ A.encode metrics
         when isDebug $ B8.hPutStrLn stderr $ B8.concat [ "DEBUG: ", msg]
         pushLogStr logset $ toLogStr msg
 
