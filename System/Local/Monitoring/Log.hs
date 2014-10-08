@@ -14,7 +14,7 @@
 -- You probably want to include some of the predefined metrics defined
 -- in the ekg-core package, by calling e.g. the 'registerGcStats'
 -- function defined in that package.
-module System.Remote.Monitoring.Log
+module System.Local.Monitoring.Log
     (
       -- * The statsd syncer
       Log

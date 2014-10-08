@@ -15,7 +15,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     
-    System.Remote.Monitoring.Log
+    System.Local.Monitoring.Log
 
   build-depends:
     base                      >= 4.4     && < 5,
