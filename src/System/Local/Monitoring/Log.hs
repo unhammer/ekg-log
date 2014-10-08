@@ -38,7 +38,7 @@ import qualified Data.Text             as T
 import qualified Data.Text.IO          ()
 import           Data.Time
 import           Data.Time.Clock.POSIX (getPOSIXTime)
-import           System.Directory      (removeFile)
+import           System.Directory      (doesFileExist, removeFile)
 import qualified System.FilePath       as FP
 import           System.IO             (stderr)
 import           System.Log.FastLogger
@@ -127,6 +127,13 @@ loop store lastSample logset opts = do
     start <- time
     sample <- Metrics.sampleAll store
     let !diff = diffSamples lastSample sample
+
+    logexists <- doesFileExist (logfile opts)
+
+    if logexists
+    then removeFile (logfile opts)
+    else return ()
+
     flushSample diff logset opts
     end <- time
     threadDelay (flushInterval opts * 1000 - fromIntegral (end - start))
@@ -161,7 +168,6 @@ diffSamples prev curr = M.foldlWithKey' combine M.empty curr
 
 flushSample :: Metrics.Sample -> LoggerSet -> LogOptions -> IO ()
 flushSample sample logset opts = do
-    removeFile (logfile opts)
     forM_ (M.toList sample) $ \(name, val) -> do
         time' <- getCurrentTime
         let newName = dottedPrefix <> name <> dottedSuffix
