@@ -16,7 +16,7 @@
 -- function defined in that package.
 module System.Local.Monitoring.Log
     (
-      -- * The statsd syncer
+      -- * The log syncer
       Log
     , logThreadId
     , forkEkgLog
@@ -38,11 +38,11 @@ import qualified Data.Text             as T
 import qualified Data.Text.IO          ()
 import           Data.Time
 import           Data.Time.Clock.POSIX (getPOSIXTime)
-import           System.Directory      (doesFileExist, removeFile)
 import qualified System.FilePath       as FP
 import           System.IO             (stderr)
 import           System.Log.FastLogger
 import qualified System.Metrics        as Metrics
+import           System.Posix.Files    (fileSize, getFileStatus)
 
 #if __GLASGOW_HASKELL__ >= 706
 import           Control.Concurrent    (forkFinally)
@@ -58,7 +58,7 @@ data Log = Log
     { threadId :: {-# UNPACK #-} !ThreadId
     }
 
--- | The thread ID of the statsd sync thread. You can stop the sync by
+-- | The thread ID of the log sync thread. You can stop the sync by
 -- killing this thread (i.e. by throwing it an asynchronous
 -- exception.)
 logThreadId :: Log -> ThreadId
@@ -95,7 +95,7 @@ data LogOptions = LogOptions
 defaultLogOptions :: LogOptions
 defaultLogOptions = LogOptions
     { logfile       = "./ekg.log"
-    , flushInterval = 5000
+    , flushInterval = 10000
     , debug         = False
     , prefix        = ""
     , suffix        = ""
@@ -105,68 +105,44 @@ defaultLogOptions = LogOptions
 -- store to a log file.
 forkEkgLog :: LogOptions    -- ^ Options
            -> Metrics.Store -- ^ Metric store
-           -> IO Log        -- ^ Statsd sync handle
+           -> IO Log        -- ^ Log sync handle
 forkEkgLog opts store = do
     logset <- newFileLoggerSet defaultBufSize (logfile opts)
     me     <- myThreadId
-    tid    <- forkFinally (loop store emptySample logset opts) $ \ r -> do
-        rmLoggerSet logset
+    tid    <- forkFinally (loop store logset opts) $ \ r -> do
         case r of
             Left e  -> throwTo me e
             Right _ -> return ()
     return $ Log tid
-  where
-    emptySample = M.empty
 
 loop :: Metrics.Store   -- ^ Metric store
-     -> Metrics.Sample  -- ^ Last sampled metrics
      -> LoggerSet       -- ^ FastLogger set
      -> LogOptions      -- ^ Options
      -> IO ()
-loop store lastSample logset opts = do
+loop store logset opts = do
     start <- time
     sample <- Metrics.sampleAll store
-    let !diff = diffSamples lastSample sample
 
-    logexists <- doesFileExist (logfile opts)
+    logstat <- getFileStatus (logfile opts)
+    let logsize = fileSize logstat
 
-    if logexists
-    then do
-        removeFile (logfile opts)
-        flushSample diff logset opts
-    else do
-	flushSample diff logset opts
+    rmLoggerSet logset
+    logset' <- newFileLoggerSet defaultBufSize (logfile opts)
+
+    flushOnSize logsize sample logset'
 
     end <- time
     threadDelay (flushInterval opts * 1000 - fromIntegral (end - start))
-    loop store sample logset opts
+    loop store logset' opts
+
+  where
+    flushOnSize sz diff logset' | sz == 0   = flushSample diff logset' opts
+                                | otherwise = return ()
 
 -- | Microseconds since epoch.
 time :: IO Int64
 time = (round . (* 1000000.0) . toDouble) `fmap` getPOSIXTime
   where toDouble = realToFrac :: Real a => a -> Double
-
-diffSamples :: Metrics.Sample -> Metrics.Sample -> Metrics.Sample
-diffSamples prev curr = M.foldlWithKey' combine M.empty curr
-  where
-    combine m name new = case M.lookup name prev of
-        Just old -> case diffMetric old new of
-            Just val -> M.insert name val m
-            Nothing  -> m
-        _        -> M.insert name new m
-
-    diffMetric :: Metrics.Value -> Metrics.Value -> Maybe Metrics.Value
-    diffMetric (Metrics.Counter n1) (Metrics.Counter n2)
-        | n1 == n2  = Nothing
-        | otherwise = Just $! Metrics.Counter $ n2 - n1
-    diffMetric (Metrics.Gauge n1) (Metrics.Gauge n2)
-        | n1 == n2  = Nothing
-        | otherwise = Just $ Metrics.Gauge n2
-    diffMetric (Metrics.Label n1) (Metrics.Label n2)
-        | n1 == n2  = Nothing
-        | otherwise = Just $ Metrics.Label n2
-    -- Distributions are assumed to be non-equal.
-    diffMetric _ _  = Nothing
 
 flushSample :: Metrics.Sample -> LoggerSet -> LogOptions -> IO ()
 flushSample sample logset opts = do
