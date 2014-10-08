@@ -10,12 +10,12 @@
 
   #+BEGIN_SRC
   import System.Metrics
-  import System.Remote.Monitoring.Statsd
+  import System.Local.Monitoring.Log
 
   main = do
       store <- newStore
       registerGcMetrics store
-      forkStatsd defaultStatsdOptions store
+      forkEkgLog defaultLogOptions store
       ...
   #+END_SRC
 
