@@ -24,32 +24,32 @@ module System.Local.Monitoring.Log
     , defaultLogOptions
     ) where
 
-import           Control.Concurrent    (ThreadId, myThreadId, threadDelay,
-                                        throwTo)
-import           Control.Exception     ()
-import           Control.Monad         (forM_, when)
-import           Data.Aeson            as A
-import qualified Data.ByteString.Char8 as B8
-import qualified Data.ByteString.Lazy  as L
-import qualified Data.HashMap.Strict   as M
-import           Data.Int              (Int64)
-import           Data.Monoid           ((<>))
-import qualified Data.Text             as T
-import qualified Data.Text.IO          ()
+import           Control.Concurrent       (ThreadId, myThreadId, threadDelay,
+                                           throwTo)
+import           Control.Exception        ()
+import           Control.Monad            (forM_, when)
+import           Data.Aeson               as A
+import qualified Data.ByteString.Char8    as B8
+import qualified Data.ByteString.Lazy     as L
+import qualified Data.HashMap.Strict      as M
+import           Data.Int                 (Int64)
+import           Data.Monoid              ((<>))
+import qualified Data.Text                as T
+import qualified Data.Text.IO             ()
 import           Data.Time
-import           Data.Time.Clock.POSIX (getPOSIXTime)
-import qualified System.FilePath       as FP
-import           System.IO             (stderr)
+import           Data.Time.Clock.POSIX    (getPOSIXTime)
+import qualified System.FilePath          as FP
+import           System.IO                (stderr)
 import           System.Log.FastLogger
-import qualified System.Metrics        as Metrics
-import           System.Posix.Files    (fileSize, getFileStatus)
+import qualified System.Metrics           as Metrics
+import           System.PosixCompat.Files (fileSize, getFileStatus)
 
 #if __GLASGOW_HASKELL__ >= 706
-import           Control.Concurrent    (forkFinally)
+import           Control.Concurrent       (forkFinally)
 #else
-import           Control.Concurrent    (forkIO)
-import           Control.Exception     (SomeException, mask, try)
-import           Prelude               hiding (catch)
+import           Control.Concurrent       (forkIO)
+import           Control.Exception        (SomeException, mask, try)
+import           Prelude                  hiding (catch)
 #endif
 
 -- | A handle that can be used to control the log sync thread.
